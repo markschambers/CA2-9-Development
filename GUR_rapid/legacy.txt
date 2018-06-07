@@ -1,0 +1,58 @@
+\section{Data extract and grooming}
+Statutory catch, effort and landings data for GUR 2 from the beginning of the 1990
+fishing year (1 October 1989), to the end of the \Sexpr{fyr} fishing year (30 September \Sexpr{fyr})
+were sourced from the Ministry for Primary Industries' \texttt{warehou} database.
+The dataset captured all fishing effort in FMA 2 that had potential to capture
+gurnard (inshore trawls in Statistical Areas 011:016) regardless of whether gurnard
+was captured.
+Data were groomed within Trident's \texttt{kahawai} database which implements grooming
+methods described by \citet{starr2007} using code adapted from the Groomer
+package \citep{bentley2012}.
+
+
+The landings data was groomed using the checks suggested by Starr (2011) as implemented in
+the groomer software. The check LADTH, which removes landings held on board or
+on land, had the largest impact although LADUP which identifies duplicate
+landings was also influential early in the time series (\autoref{fig:deleted_landings}).
+The resulting groomed landing data displayed good correspondence with the QMR/MHR
+data in each QMA (\autoref{fig:groom_sum}).
+
+<<deleted_landings, fig.cap='The gurnard landings data removed from the GUR 2 CPUE analysis dataset, the bar colour indicates the grooming checks contributing to the removals.', fig.pos='H!htb', fig.height=3.5, fig.width=5, fig.align='center'>>=
+d_landings$fyear <- as.numeric(d_landings$fyear)
+dl_data <- filter(d_landings, fyear %in% c(1990:fyr)) %>% group_by(fyear, check2) %>% summarise(land = sum(green_weight,na.rm=TRUE)/1000)
+ggplot() +
+  geom_bar(aes(x=fyear, y=land, fill=check2), data = dl_data, stat='identity') +
+  theme_classic() +
+  theme(axis.text.x = element_text(vjust = 0, hjust=2, angle = 90)) +
+  labs(x='Fishing Year', y='Landings (t)', fill = 'Check')
+@
+
+<<groom_sum, fig.cap=paste('A comparison between the groomed GUR 2 annual landed catch (bars), Quota Management Returns (QMR, 1990-2001) and Month Harvest Returns (MHR, 2002-',2015,') (black line) and Total Allowable Commercial Catch (TACC, red line).',sep=''), fig.pos='H!htb', fig.height=4>>=
+comp$fishyear <- as.numeric(comp$fishyear)
+# est_sum <- est %>% group_by(fyear) %>%
+#             summarise(est = sum(catch_weight, na.rm=TRUE)/1000)
+tacc <- data.frame(cbind(fishyear = seq(from = 1990, to = fyr, by =1), tacc = c(723, rep(725, nrow(comp)-1))))
+comp <- filter(comp, fishyear != fyr + 1)
+ggplot() +
+  geom_bar(aes(x=fishyear, y=landed), data = comp, stat='identity') +
+  geom_line(aes(x=fishyear, y=ahr), data = comp) +
+  geom_line(aes(x=fishyear, y=tacc), data = tacc, colour ='red') +
+  theme_classic()+
+  # geom_line(aes(x=fyear, y=est), data = est_sum, colour='blue') +
+  theme(axis.text.x = element_text(vjust = 0, hjust=2, angle = 90)) +
+  labs(x='Fishing Year', y='Landings (t)')
+@
+
+The configuration of the aggregated CPUE data set summarised effort records for
+each vessel fishing day followed the approach of \citet{langley2014}. For each
+fishing day, the following variables were derived: the number of trawls, total
+fishing duration (hours), the predominant target species and the predominant
+Statistical Area where fishing occurred. The estimated catches of all species
+were also determined for each fishing day. For comparability with the CELR data
+format, only the estimated catch of the five main species (by catch magnitude)
+were retained in the final aggregated data set. In the first instance, the landed
+catches of the species of interest from individual trips were allocated amongst
+the associated aggregated event records in proportion to the (daily aggregated)
+estimated catch of the species. In the absence of the species being included
+within the daily aggregated estimated catch, the landed catch was allocated in
+proportion to the fishing effort (number of trawls) within the fishing trip.

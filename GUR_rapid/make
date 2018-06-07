@@ -1,0 +1,31 @@
+TARGET=gur2_rapid_module.pdf
+
+KNITR = $(addsuffix .tex, $(basename $(wildcard *.rnw)))
+
+all: $(TARGET)
+
+.SECONDARY:
+
+$(TARGET): $(TARGET:%.pdf=%.tex) $(KNITR)
+	TEXINPUTS=.///: xelatex $<
+	biber  $(<:%.tex=%)
+	TEXINPUTS=.///: xelatex  $<
+	TEXINPUTS=.///: xelatex  $<
+
+%.tex: %.rnw gur2.rda 
+	Rscript --vanilla -e "library(knitr);opts_chunk\$$set(warning=F, message=F ,echo=F,results='asis',fig.lp='fig:',fig.path='images/'); knit('$(<F)',output='$(@F)')"
+
+gur2.rda: getdata.r
+	R --vanilla < $<
+
+# Rplots.pdf: getdata.r
+# 	R --vanilla < $<
+
+#Sometimes we want to blow away all of the R code output as well as just the latex stuff
+superclean: clean
+	find knitr -iname "*.tex" -delete
+	find knitr -iname "*.pdf" -delete
+	find knitr -iname "*.rda" -delete
+
+clean:
+	rm -rf  $(TARGET)

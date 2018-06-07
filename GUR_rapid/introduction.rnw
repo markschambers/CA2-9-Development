@@ -1,0 +1,43 @@
+<<init>>=
+library(xtable)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(rgdal)
+library(grid)
+library(broom)
+library(influ)
+library(analyser)
+library(PBSmapping)
+library(survival)
+library(cowplot)
+library(gridExtra)
+library(RColorBrewer)
+thousands <- function(x) {format(round(as.numeric(x), 0), nsmall=0, big.mark=" ")}
+geomean <- function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+load(file = 'gur2.rda')
+fyr <- as.numeric(max(effort$fishyear, na.rm=TRUE))
+species <- 'gurnard'
+species_code <- 'GUR 2'
+@
+
+This document updates the accepted catch-per-unit-effort (CPUE) index for
+\Sexpr{species} (\Sexpr{species_code}) to the end of the 2016/17 fishing year.
+It applies the CPUE analyses methods developed in 2017 that were reviewed
+by the Northern Inshore Fisheries Assessment Working Group and documented by
+\citet{schofield2017}.
+
+Two sets of analyses were conducted:
+\begin{enumerate}
+  \item GUR 2 (vessel-day): using aggregated CELR and TCER data from the BT-MIX
+        fishery in FMA 2 from 1990/91 to 2016/17
+  \item GUR 2 (tow) : using tow resolution TCER data from the BT-MIX fishery in
+        FMA 2 from 2007/08 to 2016/17
+  % \item Fisheries Assessment Report:
+\end{enumerate}
+
+The index accepted by the Northern Inshore Working Group for monitoring the abundance of
+GUR 2 is the vessel-day CPUE index; this is the focus of this rapid update,
+with an update of the GUR 2 tow index presented in Appendix B.

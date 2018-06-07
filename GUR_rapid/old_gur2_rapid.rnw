@@ -1,0 +1,815 @@
+\documentclass{trident-report}
+\usepackage{morefloats}
+\usepackage{rotating}
+\usepackage{tabularx}
+\usepackage{adjustbox}
+\usepackage{gensymb}
+% \usepackage{siunitx}
+\usepackage{longtable}
+\usepackage{soul}
+\usepackage{array}
+\newcolumntype{R}[1]{>{\raggedleft\let\newline\\\arraybackslash\hspace{0pt}}p{#1}}
+% \usepackage[justification=centering]{caption}
+\usepackage[capitalise]{cleveref}
+
+\title{Catch-per-unit-effort (CPUE) update for FMA2 Gurnard (GUR 2)}{Catch-per-unit-effort (CPUE) update for FMA2 red gurnard (GUR 2)}
+\subtitle{Report for Fisheries Inshore New Zealand}
+
+\author{M. I. Schofield \and A. D. Langley  \and D. A. J. Middleton}
+\date{\Sexpr{format(Sys.Date(), format="%B")} \Sexpr{format(Sys.Date(), format="%Y")}}
+
+\addbibresource{reference.bib}
+
+\begin{document}
+\maketitle
+\tableofcontents
+
+% Documents that are provided to MPI working  groups require a special cover sheet
+% when they are printed as a draft. Including this file will create such a title sheet
+% when the draft option is enabled. Do to the range of working groups and goals that
+% need to be acheived, users may need to edit the mpiDraftCover.tex file themselves
+% to put in the correct details.
+% \input{mpiDraftCover}
+
+<<init>>=
+library(xtable)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(rgdal)
+library(grid)
+library(broom)
+library(influ)
+library(analyser)
+library(PBSmapping)
+library(survival)
+library(cowplot)
+library(gridExtra)
+library(RColorBrewer)
+thousands <- function(x) {format(round(as.numeric(x), 0), nsmall=0, big.mark=" ")}
+load(file = 'gur2.rda')
+gmean <- function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geomean <- function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+fyr <- as.numeric(max(effort$fishyear, na.rm=TRUE))
+species <- 'gurnard'
+Species <- 'Gurnard'
+species_code <- 'GUR 2'
+# load(file = 'Rplots.pdf')
+@
+
+
+<<setup, eval=FALSE, warnings=FALSE>>=
+opts_chunk$set(comment=NA, fig.width=6, fig.height=6, dev='pdf',fig.pos='!htb')
+@
+
+\section{Introduction}
+
+\input{introduction}
+
+% Both of these analyses used with b Binomial and Weibull Generalised
+
+
+\clearpage
+\section{Characterising the GUR 2 fishery}
+
+The \Sexpr{species_code} characterisation used data from all trips that landed
+\Sexpr{species_code}, with standard data grooming prior to analysis.
+
+Patterns in the \Sexpr{species_code} fishery were typical of recent years
+(\crefrange{fig:records}{fig:catch_distribution}), indicating that a rapid
+update of the accepted abundance index \citep{schofield2017} is appropriate.
+
+
+<<records, fig.cap=paste('The number of vessel days in the ', species_code,' dataset by month and fishing year from the 1990 to the ', fyr ,' fishing year.', sep=''), fig.pos='!htb', fig.height=4>>=
+effort$month_ch <- factor(format(effort$date, format = '%b'))
+levels(effort$month_ch) <- c('Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep')
+aggregater$data$vd <- paste(aggregater$data$vessel, aggregater$data$date, sep='_')
+
+records <- filter(aggregater$data, !is.na(fyear))%>%
+  group_by(fyear, month) %>% summarise(events = n_distinct(vd))
+
+
+ggplot() +
+  geom_point(data=records, aes(x=fyear, y=month, size=events)) +
+  scale_y_continuous(breaks = seq(0, 12, by = 2)) +
+  # scale_size_continuous(breaks=c(1, 25, 75, 250, 500), range = c(1,7)) +
+  labs(x='Fishing Year', y='Month', size = 'Vessel Days') +
+  theme_classic() +
+  theme(axis.text.x = element_text(vjust = 0, angle = 90))
+@
+
+<<method, fig.cap=paste(species_code,' catch by primary method from the 1990 to the ', fyr ,' fishing year.', sep=''), fig.pos='!htb', fig.height=4>>=
+meth <- left_join(historic, dplyr::select(landings2, trip, green_weight)) %>%
+      group_by(primary_method, fishyear) %>%
+      summarise(landed =  sum(green_weight, na.rm=TRUE)/1000)
+meth <- filter(meth, !is.na(primary_method) & !is.na(fishyear) & primary_method %in% c('BT', 'BLL',
+  'BPT', 'DS', 'SN') & fishyear != as.character(fyr + 1))
+meth$primary_method <- as.factor(as.character(meth$primary_method))
+
+ggplot() +
+  geom_point(data=filter(meth, landed>0), aes(x=fishyear, y=primary_method, size=landed)) +
+  scale_size_continuous(breaks=c(1, 25, 75, 250, 500), range = c(1,7)) +
+  labs(x='Fishing Year', y='Primary Method', size = 'Catch (t)') +
+  theme_classic() +
+  theme(axis.text.x = element_text(vjust = 0, hjust=2, angle = 90))
+@
+
+<<species_target, fig.cap='GUR 2 bottom trawl catch by reported target species; all flatfish targets have been recorded as FLA.', fig.pos='!htb', fig.height=4>>=
+species_bubbles <- prop_land %>% group_by(fyear, target) %>%
+  summarise(catch = sum(catch, na.rm=TRUE)/1000,
+            frequency = n_distinct(event))
+
+p1 <- ggplot() +
+  geom_point(data=subset(species_bubbles, catch>0), aes(x=fyear, y=target, size=catch)) +
+  scale_size_continuous(breaks=c(1, 25, 75, 250, 500), range = c(1,7)) +
+  labs(x='Fishing Year', y='Target Species', size='Catch (t)') +
+  theme_classic()
+print(p1)
+@
+
+<<catch_distribution, fig.cap='Gurnard landings from the target trawl fisheries in GUR 2. Note that TCER forms were introduced in the 2008 fishing year.', fig.pos='!htb', fig.height=4>>=
+catch_dist <- inner_join(landings, dplyr::select(prop_land, trip, method, target), by='trip')
+catch_dist$fishery <-  rep("Other", nrow(catch_dist))
+catch_dist$fishery[catch_dist$target %in% c('GUR', 'SNA', 'TRE') & catch_dist$method == 'BT'] <- 'BT-Mix'
+catch_dist$fishery[catch_dist$target %in% c('TAR') & catch_dist$method == 'BT'] <- 'BT-TAR'
+catch_dist$fishery[catch_dist$target %in% c('FLA','BFL','BLF','BRI','ESO','FLO','GFL','LSO','SFL','SOL','TUR','WIT','YBF') & catch_dist$method == 'BT'] <- 'BT-FLA'
+catch_dist <- filter(catch_dist, !duplicated(trip))
+
+catch_dist$fishyear <- as.numeric(catch_dist$fishyear)
+catch_dist <- filter(catch_dist, fishstock_code == 'GUR2' & fishyear != fyr+1)
+
+ggplot(catch_dist[order(catch_dist$fishery),], aes(x = fishyear, fill = fishery, y = green_weight/1000, order = fishery)) +
+  geom_bar(stat='identity') +
+  # scale_y_continuous(labels = percent_format()) +
+  theme_classic() +
+  theme(axis.text.x = element_text(vjust = 0, hjust=2, angle = 90)) +
+  scale_fill_discrete(name="Fishery") +
+  xlab('Fishing Year') +
+  ylab('GUR 2 landings (t)')
+@
+
+<<groom_sum, fig.cap='A comparison between the groomed GUR 2 annual landed catch (bars), Quota Management Returns (QMR, 1990-2001) and Month Harvest Returns (MHR, 2002-2015) (black line) and Total Allowable Commercial Catch (TACC, red line).', fig.pos='!htb', fig.height=4>>=
+comp$fishyear <- as.numeric(comp$fishyear)
+# est_sum <- est %>% group_by(fyear) %>%
+#             summarise(est = sum(catch_weight, na.rm=TRUE)/1000)
+tacc <- data.frame(cbind(fishyear = seq(from = 1990, to = 2017, by =1), tacc = c(723, rep(725, nrow(comp)-2))))
+comp <- filter(comp, fishyear != '2018')
+
+ggplot() +
+  geom_bar(aes(x=fishyear, y=landed), data = comp, stat='identity') +
+  geom_line(aes(x=fishyear, y=ahr), data = comp) +
+  geom_line(aes(x=fishyear, y=tacc), data = tacc, colour ='red') +
+  theme_classic()+
+  # geom_line(aes(x=fyear, y=est), data = est_sum, colour='blue') +
+  theme(axis.text.x = element_text(vjust = 0, hjust=2, angle = 90)) +
+  labs(x='Fishing Year', y='Landings (t)')
+@
+
+\clearpage
+
+\subsection{Precision Seafood Harvesting (PSH)}
+Precision Seafood Harvesting (PSH) bottom trawling, encoded PRB, changes the cod
+end of a standard bottom trawl. The current GUR 2 analysis \citep{schofield2016}
+only considered conventional bottom trawl, however whilst PSH is still operating
+under special permit it is anticipated to become more prevalent in the inshore trawl fleet.
+\autoref{tab:psh} examines the amount of GUR 2 effort and catch by PSH relative
+to bottom trawl in the last three fishing years.
+
+<<last_year_tab>>=
+effort_a <- left_join(filter(effort, fishyear %in% c('2015', '2016', '2017') &
+        primary_method %in% c('BT', 'PRB', 'PRM', 'PSH')),
+    dplyr::select(filter(allocated, species_code == 'GUR'), event_key, catch),
+    by = 'event_key')
+
+# method_table <-
+#     left_join(effort_a %>% group_by(primary_method, fishyear) %>% summarise(
+#         events = n_distinct(event_key),
+#         catch_t = sum(catch, na.rm = TRUE) / 1000,
+#         vessels = n_distinct(vessel_name)),
+#         effort_a %>% group_by(fishyear) %>% summarise(
+#           ttl_events = n_distinct(event_key),
+#           ttl_catch = sum(catch, na.rm = TRUE) / 1000),
+#         by = 'fishyear')
+#
+# method_table$'percent_effort' <- method_table$events / method_table$ttl_events * 100
+# method_table$'percent_captured' <- method_table$catch_t / method_table$ttl_catch * 100
+
+
+# with(effort_a, tapply(catch, list(primary_method, fishyear), function(x){sum(x,na.rm=TRUE)}))
+meth_tab <- round(with(effort_a, tapply(catch, list(primary_method, fishyear), function(x){sum(x,na.rm=TRUE)/1000})),1)
+meth_tab <- xtable(meth_tab, label='tab:psh')
+# colnames(meth_tab) <- c('Primary Method', 'Fishing events', '%', 'Vessels', 'TRE 1 (t)', '%')
+caption(meth_tab) <- 'The GUR 2 allocated catch, in tonnes, by standard bottom trawl (BT) and Precision Seafood Harvest trawls (PSH, PRB) in the 2015, 2016 and 2017 fishing years. * PSH is used where primary method was reported as NULL and not interpolated as PRM or PRB by the Ministry of Primary Industries (MPI),'
+print(meth_tab, caption.placement='top', include.rownames = TRUE, hline.after = c())
+@
+
+\clearpage
+\section{BT-MIX daily aggregated CPUE analysis}
+
+The vessel-date aggregation recommended by \citet{langley2014} is used to provide a
+ data set from 1990 to \Sexpr{fyr}.
+
+The BT-MIX aggregated fishery is defined as follows:
+\begin{itemize}
+  \item Form type in (CEL, TCP, TCE)
+  \item Primary method: conventional bottom trawl (BT)
+  \item Target species either gurnard, trevally or snapper (GUR, TRE, SNA)
+  \item Fishing effort conducted within Statistical Areas 011, 012, 013, 014, 015 or 016
+  \item Fishing effort conducted between 1 Oct 1989 and 30 Sept \Sexpr{fyr}
+\end{itemize}
+
+
+\subsection{Core vessel selection}
+This analysis used the same core fleet definition as \citet{schofield2017}:
+vessels operating in the BT-MIX fishery for a minimum of 7 years and
+conducting 5 trips in each of these years (\autoref{fig:gur_criteria}). This resulted
+in a core fleet of \Sexpr{n_distinct(restrictor$data$vessel)} vessels which
+accounted for \Sexpr{round(sum(restrictor$data$catch)/sum(aggregater$data$catch) * 100, 2)}\%
+of the BT-MIX catch.
+
+<<gur_criteria, fig.cap='Percentage of catch (left panel) and number of vessels (right panel) in the BT-MIX aggregated dataset with alternative criteria for core fleet selection.', fig.pos='!htb', fig.height=4, fig.width=5, fig.align='center'>>=
+get_legend <- function(myggplot){
+  tmp <- ggplot_gtable(ggplot_build(myggplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)
+}
+vessel_years_trips <<- subsetter$data %>%
+  filter(catch>=0) %>%
+  group_by(vessel,fyear) %>%
+  summarise(trips=length(unique(trip)))
+qualify <- function(.){
+  trips_ <- max(.$trips_min)
+  years_ <- max(.$years_min)
+  vessel_years_trips %>%
+    filter(trips>=trips_) %>%
+    group_by(vessel) %>%
+    summarise(years=length(fyear)) %>%
+    filter(years>=years_)
+}
+
+criteria_vessels <- expand.grid(trips_min=c(1,3,5,10), years_min=1:10) %>%
+  group_by(trips_min, years_min) %>%
+  do(vessels=qualify(.))
+# Calculate number of vessels and catch for each combination
+criteria_vessels <- criteria_vessels %>% bind_cols(
+  criteria_vessels %>%
+    do(data.frame(
+      num = nrow(.$vessels),
+      catch = sum(subsetter$data$catch[subsetter$data$vessel %in% .$vessels$vessel])
+    ))
+)
+# Normalise catches
+criteria_vessels <- within(criteria_vessels, {
+  catch <- catch / sum(subsetter$data$catch) * 100
+})
+
+# Plot it
+plot_base <- ggplot(criteria_vessels,aes(x=years_min, colour=factor(trips_min), shape=factor(trips_min))) +
+  scale_shape_manual(values=1:10) +
+  labs(x='Min (fyear)', colour='Min (trips)', shape='Min (trips)')
+
+plot_catch <- plot_base + geom_point(aes(y=catch),size=2,alpha=0.7) +
+  ylim(0,NA) + labs(y='Percentage of catch') + scale_x_continuous(breaks = c(0,2,4,6,8,10)) +
+  theme(legend.title = element_text(size=8), legend.text = element_text(size=8))
+leg <- get_legend(plot_catch)
+plot_catch <- plot_catch + theme(legend.position="none", axis.title.x = element_text(size=10),
+    axis.title.y = element_text(size=10), axis.text = element_text(size=8))
+
+plot_vessels <- plot_base + geom_point(aes(y=num),size=2,alpha=0.7) +
+  ylim(0,NA) + labs(y='Number of vessels') + theme(legend.position="none" ,
+  axis.title.x = element_text(size=10), axis.title.y = element_text(size=10), axis.text = element_text(size=8)) +
+  scale_x_continuous(breaks = c(0,2,4,6,8,10))
+
+plot_grid(plot_catch, plot_vessels, leg,  align = 'hv', labels=c('A', 'B'), rel_widths =c(1,1,0.4), ncol = 3)
+@
+
+<<vesbubble, fig.cap='Number of trips by fishing year for core GUR 2 vessel-day vessels. The area of circles is proportional to the number of trips.', fig.pos ='!htb', fig.height=6>>=
+corer$bubble_plot() + theme_classic() + theme(axis.ticks.y=element_blank(), axis.text.y=element_blank())
+@
+
+\clearpage
+
+\subsection{CPUE dataset}
+
+The number of vessels in the core fleet, the number of fishing days and
+their \Sexpr{species_code} catch (\autoref{fig:keystats}) are consistent with
+the data set used by \citet{schofield2017}.
+
+Fishing patterns by the core fleet show no marked changes in \Sexpr{fyr}
+(\crefrange{fig:bean}{fig:stacked2}).
+
+<<keystats, fig.cap='Comparison of the catch (A), number of vessels (B) and number vessel days (C) between this analysis and Schofield et al (2016).', fig.pos ='!htb', fig.height=6>>=
+corer16$data$analysis <- 'Schofield et al (2017)'
+corer$data$analysis <- 'rapid update 2017'
+corer16$data$vd <- paste(corer16$data$vessel, corer16$data$date, sep='_')
+corer$data$vd <- paste(corer$data$vessel, corer$data$date, sep='_')
+years <- bind_rows(corer$data, corer16$data)
+keystats <- years %>%
+            group_by(analysis, fyear) %>%
+            summarise(
+              vessels = n_distinct(vessel),
+              vds = n_distinct(vd),
+              catch = sum(catch, na.rm=TRUE)
+              )
+
+p1 <- ggplot(keystats) +
+  geom_line(aes(x=fyear, y=catch/1000, colour=analysis)) +
+  geom_point(aes(x=fyear, y=catch/1000, shape=analysis, colour=analysis)) +
+  labs(x='Fishing Year', y='Catch (t)', colour='Analysis', shape='Analysis') +
+  ylim(0,475) +
+  theme_classic() +
+  theme(legend.position='top')
+
+
+p2 <- ggplot(keystats) +
+  geom_line(aes(x=fyear, y=vessels, colour=analysis)) +
+  geom_point(aes(x=fyear, y=vessels, shape=analysis, colour=analysis)) +
+  labs(x='Fishing Year', y='Vessels in core fleet', colour='Analysis', shape='Analysis') +
+  ylim(0,33) +
+  theme_classic() +
+  theme(legend.position='none')
+
+
+p3 <- ggplot(keystats) +
+  geom_line(aes(x=fyear, y=vds, colour=analysis)) +
+  geom_point(aes(x=fyear, y=vds, shape=analysis, colour=analysis)) +
+  labs(x='Fishing Year', y='Vessel Days', colour='Analysis', shape='Analysis') +
+  ylim(0,2000) +
+  theme_classic()+
+  theme(legend.position='none')
+
+
+plot_grid(p1, p2, p3, labels=c('A', 'B', 'C'), ncol = 1)
+
+@
+
+<<bean, fig.cap=paste('Bean plot showing the distribution of GUR 2 fishing durations from 1990 to ', fyr,' median annual durations are marked by red dots.', sep=''), fig.pos='!htb', fig.height=4>>=
+# catch_dist <- filter(catch_dist, fishstock_code == 'GUR2' & fishyear != fyr+1)
+
+ggplot(restrictor$data, aes(x = fyear, y = duration)) +
+  geom_violin() +
+  stat_summary(fun.y=median, geom="point", size=2, color="red") +
+  theme_classic() +
+  theme(axis.text.x = element_text(vjust = 0, hjust=2, angle = 90)) +
+  labs(x='Fishing Year', y='Fishing Duration (hrs)')
+@
+
+<<stacked, fig.cap=paste('Stacked bar chart showing the percentage of ', species_code ,' vessel days within each statistical area from 1990 to ', fyr,'.', sep=''), fig.pos='!htb', fig.height=4>>=
+# catch_dist <- filter(catch_dist, fishstock_code == 'GUR2' & fishyear != fyr+1)
+restrictor$data$vd <- paste(restrictor$data$vessel, restrictor$data$date, sep='_')
+
+cat_plot <- left_join(restrictor$data %>% group_by(area, fyear) %>%
+    summarise(freq = n_distinct(vd)),
+    restrictor$data %>% group_by(fyear) %>%
+        summarise(total = n_distinct(vd)))
+
+cat_plot$prop <- (cat_plot$freq / cat_plot$total)* 100
+
+ggplot(cat_plot) +
+  geom_bar(aes(x=fyear, y=prop, fill=area), stat='identity') +
+  # scale_fill_manual(values=c('tomato2', 'steelblue3', 'darkolivegreen2'), labels=c('CELR', 'TCER', 'TCEPR')) +
+  labs(y='Percentage', x='Fishing Year', fill= 'Statistical Area') +
+  theme_classic() +
+  theme(axis.text.x = element_text(vjust = 0, hjust=2, angle = 90))
+@
+
+<<stacked2, fig.cap=paste('Stacked bar chart showing the percentage of ', species_code ,' vessel days within each month from 1990 to ', fyr,'.', sep=''), fig.pos='!htb', fig.height=4>>=
+cat_plot <- left_join(restrictor$data %>% group_by(month, fyear) %>%
+    summarise(freq = n_distinct(vd)),
+    restrictor$data %>% group_by(fyear) %>%
+        summarise(total = n_distinct(vd)))
+
+cat_plot$prop <- (cat_plot$freq / cat_plot$total)* 100
+
+ggplot(cat_plot) +
+  geom_bar(aes(x=fyear, y=prop, fill=month), stat='identity') +
+  # scale_fill_manual(values=c('tomato2', 'steelblue3', 'darkolivegreen2'), labels=c('CELR', 'TCER', 'TCEPR')) +
+  labs(y='Percentage', x='Fishing Year', fill= 'Month') +
+  theme_classic() +
+  theme(axis.text.x = element_text(vjust = 0, hjust=2, angle = 90))
+@
+
+<<stacked3, fig.cap=paste('Stacked bar chart showing the percentage of GUR 2 vessel days directed at each target species from 1990 to ', fyr,'.', sep=''), fig.pos='!htb', fig.height=4>>=
+cat_plot <- left_join(restrictor$data %>% group_by(target, fyear) %>%
+    summarise(freq = n_distinct(vd)),
+    restrictor$data %>% group_by(fyear) %>%
+        summarise(total = n_distinct(vd)))
+
+cat_plot$prop <- (cat_plot$freq / cat_plot$total)* 100
+
+ggplot(cat_plot) +
+  geom_bar(aes(x=fyear, y=prop, fill=target), stat='identity') +
+  # scale_fill_manual(values=c('tomato2', 'steelblue3', 'darkolivegreen2'), labels=c('CELR', 'TCER', 'TCEPR')) +
+  labs(y='Percentage', x='Fishing Year', fill= 'Target Species') +
+  theme_classic() +
+  theme(axis.text.x = element_text(vjust = 0, hjust=2, angle = 90))
+@
+
+<<stacked4, fig.cap=paste('The size of the core GUR 2 fleet from 1990 to ', fyr,'.', sep=''), fig.pos='!htb', fig.height=4>>=
+cat_plot <- restrictor$data %>% group_by(fyear) %>%
+    summarise(freq = n_distinct(vessel))
+
+ggplot(cat_plot) +
+  geom_bar(aes(x=fyear, y=freq), stat='identity') +
+  labs(y='Vessels', x='Fishing Year') +
+  theme_classic() +
+  theme(axis.text.x = element_text(vjust = 0, hjust=2, angle = 90))
+@
+
+% <<resid_ves, fig.cap=paste('The annual median standardised residual for each vessel in the GUR 2 fleet from 1990 to ', fyr,'.', sep=''), fig.pos='!htb', fig.height=4>>=
+% data_res <- cbind(data.frame(filter(restrictor$data, catch > 0)), data.frame(residuals(abundance)))
+%
+% diag <- data_res %>% group_by(vessel, fyear) %>%
+%   summarise(res = median(residuals.abundance.))
+%
+% ggplot(diag) +
+%   geom_point(aes(x=fyear, y=res, colour=vessel), stat='identity') +
+%   geom_line(aes(x=fyear, y=res, colour=vessel, group=vessel), stat='identity') +
+%   labs(y='Median Standardised Residual', x='Fishing Year') +
+%   theme_classic() +
+%   theme(axis.text.x = element_text(vjust = 0, hjust=2, angle = 90), legend.position='none')
+% @
+
+\subsection{CPUE Models}
+
+For the rapid update, the accepted CPUE model is refitted without a model
+selection process.
+
+The explanatory variables are listed in \autoref{tab:celr_pre}; records where
+variables are outside the valid range were dropped.
+
+\small
+\begin{table}[ht]
+\centering
+\caption{The variables in the Binomial and Weibull vessel-day resolution GUR 2 CPUE model.}
+\begin{tabular}{p{3cm} R{5.5cm} R{2.75cm} R{2cm}}
+  Variable & Definition & Data type & Range \\
+  \rule{0pt}{3ex}
+  Fishing Year & Fishing year  & Categorical (27)  & 1990:\Sexpr{fyr} \\
+  \rule{0pt}{1ex}
+  Vessel & Fishing vessel & Categorical (47) &    \\
+  \rule{0pt}{1ex}
+  Month & Month & Categorical (12) &  Jan-Dec \\
+  \rule{0pt}{1ex}
+  Area & Statistical Area & Categorical (6) &  011-016 \\
+  \rule{0pt}{1ex}
+  Area * Month & Area and month combination & Categorical (72) &    \\
+  \rule{0pt}{1ex}
+  Duration & Natural logarithm of trawl duration (hours) & Continuous & ln(1:24) \\
+  \rule{0pt}{1ex}
+  Target Species & Most frequent target species for the vessel-day & Categorical (3) & GUR, SNA, TRE\\
+\end{tabular}
+\label{tab:celr_pre}
+\end{table}
+
+
+\begin{table}[ht]
+\centering
+\caption{Summary of the GUR 2 BT-MIX aggregated Generalised Linear Models.}
+\begin{tabular}{p{2.5cm} R{7cm} R{3.5cm}}
+% \begin{tabular}{p{0.2\\textwidth}R{0.2\\textwidth}R{0.2\\textwidth}R{0.2\\textwidth}}
+Analysis & CPUE Model & Error Distribution \\
+\rule{0pt}{3ex}
+% Occurence of positive catch & fyear + vessel + target + poly(log(duration), 3) + area  & Binomial \\
+% \rule{0pt}{3ex}
+Magnitude of positive catch & fyear + poly(log(duration), 3) + vessel + target + area * month  & Weibull \\
+\end{tabular}
+\label{tab:models}
+\end{table}
+
+% Most of the records in the BT-MIX aggregated data have positive catch (\autoref{fig:occur}).
+The NINS WG has accepted the BT-MIX CPUE index with indices derived from the positive catch
+component only \citep{plenary2016}. Occurrence of positive gurnard catch is not a
+component of the final CPUE indices consequently is not presented here.
+
+% <<occur, fig.cap='The occurrence of positive catch indices for the BT-MIX fishery.', fig.pos ='!htb', fig.height=3.5, fig.width=4, fig.align='center'>>=
+% bin <- ggplot() +
+%     geom_point(data = index, aes(x = fyear, y = b_index)) +
+%     geom_line(data = index, aes(x = fyear, y = b_index)) +
+%     # geom_errorbar(data = index, aes(x = fyear, ymax = min(b_index + b_se,1), ymin = b_index - b_se), width=0) +
+%     # coord_cartesian(ylim=c(0.5,1.3))+
+%     ylim(0, 1) +
+%     xlab('Fishing Year') +
+%     ylab('Occurrence') +
+%     theme_classic()
+% print(bin)
+% @
+
+\subsubsection{Model diagnostics}
+
+% \begin{figure}[!h]
+%   \centering
+%   \includegraphics[scale=0.65]{Rplot001.png}
+%   \caption{The Weibull diagnostic plots for the GUR 2 vessel-day model. top left: Standardised residuals from the accepted generalised linear model fit; top right: The standardised residuals versus the fitted values; bottom left: Quantile-quantile plot of observed response versus likelihood of the distribution of these values;  bottom right: Obversed values vs fitted values.}
+%   \label{fig:diagnostics2}
+% \end{figure}
+
+
+<<diagnostics, fig.cap='The Weibull diagnostic plots for the GUR 2 vessel-day model. top left: Standardised residuals from the accepted generalised linear model fit; top right: The standardised residuals versus the fitted values; bottom left: Quantile-quantile plot of observed response versus likelihood of the distribution of these values;  bottom right: Obversed values vs fitted values.', fig.pos='!htb', fig.height=5>>=
+diagnoser$diagnostics_plot()
+@
+
+<<influstan, fig.cap='A comparison of the standardised and unstandardised CPUE indices for the GUR 2 vessel-day model. The unstandardised index is the geometric mean of the catch per strata and is not adjusted for effort.', fig.pos='!htb', fig.height=5>>=
+influ$stanPlot()
+@
+
+
+\clearpage
+\subsection{CPUE Indices}
+
+In the longer aggregated BT-MIX CPUE series, there are indications of cyclical
+variations in abundance with a 4 - 5 year period (\autoref{fig:indices_tow}).
+There was an overall decreasing trend in CPUE from 1990 - 2007, after which CPUE
+has trended upwards with an especially rapid increase from 2012 - 2016. This trend is
+corroborated by the TCER indices. The \Sexpr{fyr} data point shows a change in trajectory
+for the indices and a decline in CPUE (\autoref{fig:indices_tow}). The indices produced
+in this rapid update are consistent with the indices of \citet{schofield2017} (\autoref{fig:indices_comp}).
+
+<<indices_comp, fig.cap='The CPUE indices for the GUR 2 vessel-day fishery (black) and the last analysis of GUR 2 conducted by Schofield et al (2017)', fig.pos='!htb', fig.height=5, fig.width=5, fig.align='center'>>=
+index16$analysis <- 'Schofield et al (2017)'
+index$analysis <- 'This analysis'
+index$index <- index$index / mean(index[1:27, ]$index)
+index_comp <- bind_rows(dplyr::select(index, fyear, index, analysis), index16)
+
+
+ggplot() +
+    geom_line(data = index_comp, aes(x = fyear, y = index, colour=analysis)) +
+    # geom_line(data = index16, aes(x = fyear, y = index), colour='blue') +
+    ylim(0, 2.0) +
+    scale_y_continuous(breaks=seq(from =0, to= 2.0, by=0.25)) +
+    scale_x_continuous(breaks=seq(from =1990, to= fyr, by=1)) +
+    coord_cartesian(ylim = c(0, 2.0)) +
+    labs(x='Fishing Year', y='Relative CPUE indices', colour='') +
+    theme_classic() +
+    scale_colour_manual(values=c("black", "red")) +
+    theme(legend.position=c(.5,.9), axis.text.x = element_text(vjust = 0, hjust=2, angle = 90))
+@
+
+<<indices_tow, fig.cap='The CPUE indices for the GUR 2 vessel-day fishery (black) and the GUR 2 TCER fishery, indices are plotted with 1 standard error intervals.', fig.pos='!htb', fig.height=5, fig.width=5, fig.align='center'>>=
+index$type <- 'BT_MIX(day)'
+index_tow$type <- 'BT_MIX(tow)'
+index_na <- index[1:18,]
+index_na[,2:ncol(index)] <- NA
+index_na$type <- 'BT_MIX(tow)'
+index_tow <- bind_rows(index_na, index_tow)
+index2 <- index
+index2$index <- index2$index /  mean(index2[19:28, ]$index)
+index_comp <- bind_rows(index2, index_tow)
+
+ggplot() +
+    geom_line(data = index_comp, aes(x = fyear, y = index, colour=type)) +
+    geom_errorbar(data = index2, aes(x = fyear, ymax = index + se, ymin = index - se), width=0) +
+    ylim(0, 1.7) +
+    scale_y_continuous(breaks=seq(from =0, to= 1.75, by=0.25)) +
+    scale_x_continuous(breaks=seq(from =1990, to= fyr, by=1)) +
+    coord_cartesian(ylim = c(0, 1.7)) +
+    labs(x='Fishing Year', y='Relative CPUE indices', colour='') +
+    theme_classic() +
+    scale_colour_manual(values=c("black", "red")) +
+    theme(legend.position=c(.5,.9), axis.text.x = element_text(vjust = 0, hjust=2, angle = 90))
+@
+
+\clearpage
+
+\printbibliography
+
+\clearpage
+\section{Appendices}
+\subsection{Appendix A - Influence plots for GUR 2 aggregated}
+
+
+<<influstep, fig.cap='Changes in GUR 2 vessel-day annual CPUE indices as each term is successively added to the model. The indices are normalised to a geometric mean of 1.', fig.pos='!htb',fig.height=7.5>>=
+influ$stepPlot()
+@
+\clearpage
+
+<<influcdi_dur, fig.cap='Coefficient-distribution-influence plot for fishing duration in the GUR 2 vessel-day positive catch model.', fig.pos='!htb'>>=
+influ$cdiPlot('poly(log(duration), 3)')
+@
+
+<<influcdi_ves, fig.cap='GUR 2 vessel-day coefficient-distribution-influence plot for vessel.', fig.pos='!htb'>>=
+influ$orders['vessel'] = 'coef'
+influ$cdiPlot('vessel')
+@
+
+<<influ_areamonth, fig.cap='Coefficients for the area * month interaction from the GUR 2 vessel-day model, coefficients are plotted with 1 standard error intervals.', fig.pos='!htb'>>=
+area_month <- bind_rows(data.frame(cbind(indices=abundance$coefficients[grep('^area_month011', names(abundance$coefficients))], area= '011',
+          se = sqrt(diag(vcov(abundance)))[grep('^area_month011', names(sqrt(diag(vcov(abundance)))))],
+          month=gsub(".*:", "", names(abundance$coefficients[grep('^area_month011', names(abundance$coefficients))])))),
+  data.frame(cbind(indices=abundance$coefficients[grep('^area_month012', names(abundance$coefficients))], area= '012',
+          se = sqrt(diag(vcov(abundance)))[grep('^area_month012', names(sqrt(diag(vcov(abundance)))))],
+          month=gsub(".*:", "", names(abundance$coefficients[grep('^area_month012', names(abundance$coefficients))])))),
+  data.frame(cbind(indices=abundance$coefficients[grep('^area_month014', names(abundance$coefficients))], area= '014',
+          se = sqrt(diag(vcov(abundance)))[grep('^area_month014', names(sqrt(diag(vcov(abundance)))))],
+          month=gsub(".*:", "", names(abundance$coefficients[grep('^area_month014', names(abundance$coefficients))])))),
+  data.frame(cbind(indices=abundance$coefficients[grep('^area_month015', names(abundance$coefficients))], area= '015',
+          se = sqrt(diag(vcov(abundance)))[grep('^area_month015', names(sqrt(diag(vcov(abundance)))))],
+          month=gsub(".*:", "", names(abundance$coefficients[grep('^area_month015', names(abundance$coefficients))])))),
+  data.frame(cbind(indices=abundance$coefficients[grep('^area_month016', names(abundance$coefficients))], area= '016',
+          se = sqrt(diag(vcov(abundance)))[grep('^area_month016', names(sqrt(diag(vcov(abundance)))))],
+          month=gsub(".*:", "", names(abundance$coefficients[grep('^area_month016', names(abundance$coefficients))])))),
+  data.frame(cbind(indices=abundance$coefficients[grep('^area_month013', names(abundance$coefficients))], area= '013',
+          se = sqrt(diag(vcov(abundance)))[grep('^area_month013', names(sqrt(diag(vcov(abundance)))))],
+          month=gsub(".*:", "", names(abundance$coefficients[grep('^area_month013', names(abundance$coefficients))])))))
+
+area_month$month2 <- factor(month.abb[as.numeric(area_month$month)], levels = c('Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'))
+
+area_month$indices <- as.numeric(area_month$indices)
+area_month$se <- as.numeric(area_month$se)
+area_month$month <- as.numeric(area_month$month)
+area_month$area <- as.factor(area_month$area)
+
+ggplot(area_month) +
+  geom_point(data=area_month, aes(x=month2, y=indices, group=1)) +
+  geom_line(data=area_month, aes(x=month2, y=indices, group=1)) +
+  geom_errorbar(data=area_month, aes(x= month2, ymin=indices-se, ymax=indices+se, group=1)) +
+  # scale_x_continuous(breaks=1:12,labels=levels(area_month$month2))+
+  geom_hline(yintercept=0,linetype=3,colour='grey') +
+  facet_wrap(~ area) +
+  labs(x='Month', y='Coefficient') +
+  scale_size_area() +
+  theme_classic() +
+  theme(axis.text.x=element_text(angle=90))
+@
+
+<<influcdi_targ, fig.cap='GUR 2 vessel-day coefficient-distribution-influence plot for target species.', fig.pos='!htb'>>=
+influ$cdiPlot('target')
+@
+
+\clearpage
+
+\subsection{Appendix B - GUR 2 TCER analysis}
+
+The BT-MIX TCER fishery is defined as follows:
+\begin{itemize}
+  \item Form type (TCER)
+  \item Primary method: bottom trawl (BT)
+  \item Target species (GUR, SNA, TRE)
+  \item Fishing effort conducted within Statistical Areas 011, 012, 013, 014, 015 and 016
+  \item Fishing effort conducted between 1 Oct 2008 and 30 Sept 2016
+\end{itemize}
+
+The BT-MIX TCER analysis applied a core fleet definition (\autoref{fig:gur_tow_criteria})
+of vessels operating in the fishery for 5 years and conducting at least 5 trips
+in each of these years. Applying this criteria resulted in a core fleet of
+\Sexpr{n_distinct(corer_tow$data$vessel)} vessels who accounted for \Sexpr{round(sum(corer_tow$data$catch)/sum(subsetter_tow$data$catch) * 100, 2)}\%
+of the GUR 2 catch.
+
+<<gurtow_criteria, fig.cap='Percentage of catch (left panel) and number of vessels (right panel) in the BT-MIX TCER dataset with alternative criteria for core fleet selection..', fig.pos='!htb', fig.height=5, fig.width=5, fig.align='center'>>=
+get_legend <- function(myggplot){
+  tmp <- ggplot_gtable(ggplot_build(myggplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)
+}
+vessel_years_trips <<- subsetter_tow$data %>%
+  filter(catch>=0) %>%
+  group_by(vessel,fyear) %>%
+  summarise(trips=length(unique(trip)))
+qualify <- function(.){
+  trips_ <- max(.$trips_min)
+  years_ <- max(.$years_min)
+  vessel_years_trips %>%
+    filter(trips>=trips_) %>%
+    group_by(vessel) %>%
+    summarise(years=length(fyear)) %>%
+    filter(years>=years_)
+}
+
+criteria_vessels <- expand.grid(trips_min=c(1,3,5,10), years_min=1:10) %>%
+  group_by(trips_min, years_min) %>%
+  do(vessels=qualify(.))
+# Calculate number of vessels and catch for each combination
+criteria_vessels <- criteria_vessels %>% bind_cols(
+  criteria_vessels %>%
+    do(data.frame(
+      num = nrow(.$vessels),
+      catch = sum(subsetter_tow$data$catch[subsetter_tow$data$vessel %in% .$vessels$vessel])
+    ))
+)
+# Normalise catches
+criteria_vessels <- within(criteria_vessels, {
+  catch <- catch / sum(subsetter_tow$data$catch) * 100
+})
+
+# Plot it
+plot_base <- ggplot(criteria_vessels,aes(x=years_min, colour=factor(trips_min), shape=factor(trips_min))) +
+  scale_shape_manual(values=1:10) +
+  labs(x='Min (fyear)', colour='Min (trips)', shape='Min (trips)')
+
+plot_catch <- plot_base + geom_point(aes(y=catch),size=2,alpha=0.7) +
+  ylim(0,NA) + labs(y='Percentage of catch') + scale_x_continuous(breaks = c(0,2,4,6,8,10)) +
+  theme(legend.title = element_text(size=8), legend.text = element_text(size=8))
+leg <- get_legend(plot_catch)
+plot_catch <- plot_catch + theme(legend.position="none", axis.title.x = element_text(size=10),
+    axis.title.y = element_text(size=10), axis.text = element_text(size=8))
+
+plot_vessels <- plot_base + geom_point(aes(y=num),size=2,alpha=0.7) +
+  ylim(0,NA) + labs(y='Number of vessels') + theme(legend.position="none" ,
+  axis.title.x = element_text(size=10), axis.title.y = element_text(size=10), axis.text = element_text(size=8)) +
+  scale_x_continuous(breaks = c(0,2,4,6,8,10))
+
+plot_grid(plot_catch, plot_vessels, leg,  align = 'hv', labels=c('A', 'B'), rel_widths =c(1,1,0.4), ncol = 3)
+@
+
+<<gurtow_bubble, fig.cap='Number of trips by fishing year for core BT-MIX TCER vessels. The area of circles is proportional to the number of trips for a vessel in a fishing year.', fig.pos ='!htb',fig.height=4.5, fig.width=4.5,fig.align='center'>>=
+corer_tow$bubble_plot() + theme_classic() + theme(axis.ticks.y=element_blank(), axis.text.y=element_blank())
+@
+
+\begin{table}[ht]
+\centering
+\caption{The variables offered to the Binomial and Weibull TCER resolution GUR 2 CPUE model for model selection.}
+% \begin{tabular}{p{0.2\\textwidth}R{0.2\\textwidth}R{0.2\\textwidth}R{0.2\\textwidth}}
+\begin{tabular}{p{2.5cm} R{7cm} R{2.75cm} R{2.5cm}}
+ Variable & Definition & Data type & Range \\
+  Fishing Year & Fishing year  & Categorical (9) & 2008:2016 \\
+  Vessel & Fishing vessel & Categorical (24) &    \\
+  Month & Month & Categorical (12) &  Jan-Dec \\
+  Area & Statistical Area & Categorical (6) &  011-016 \\
+  Area * Month & Area month combination & Categorical (72) &    \\
+  Duration & Duration of fishing effort for the day (hours) & Continuous & ln(1-6) \\
+  Effort & Number of trawls in the day & Continuous & 1-6\\
+  Target Species & Most frequent target species for the vessel-day & Categorical (3) & GUR, SNA, TRE\\
+  Latitude & Absolute start latitude for the trawl & Continuous & 37.45-40.915\\
+  Longitude & Reported start longitude for the trawl & Continuous & 176.2-178.73\\
+  Speed & Speed of the trawl (knots) & Continuous & 1.9-4 \\
+  Distance & Distance trawled (N. miles) & Continuous & 2-14 \\
+  Trawl width & Wingspread of the trawl gear (m) & Continuous & 5-40\\
+  Trawl height & Headline height of trawl gear (m) & Continuous & 0.5-15\\
+  Depth & Depth of the bottom (m) & Continuous & 1-100 \\
+\end{tabular}
+\label{tab:tcer_pre}
+\end{table}
+
+<<influstep_tow, fig.cap='Changes in BT-MIX TCER annual CPUE indices as each term is successively added to the model. The indices are normalised to a geometric mean of 1.', fig.pos='!htb', fig.width=5,fig.height=7.5,fig.align='center'>>=
+influ_tow$stepPlot()
+@
+
+
+<<influcdi_ves_tow, fig.cap='BT-MIX 2 TCER coefficient-distribution-influence plot for vessel.', fig.pos='!htb', fig.height=4.5>>=
+influ_tow$orders['vessel'] = 'coef'
+influ_tow$cdiPlot('vessel')
+@
+
+<<influcdi_dur_tow, fig.cap='BT-MIX 2 TCER coefficient-distribution-influence plot for fishing duration.', fig.pos='!htb', fig.height=4.5>>=
+influ_tow$cdiPlot('poly(log(duration), 3)')
+@
+
+<<influ_areamonth_tow, fig.cap='Coefficients for the area * month interaction from the GUR 2 TCER model, coefficients are plotted with 1 standard error intervals.', fig.pos='!htb'>>=
+area_month <- bind_rows(data.frame(cbind(indices=abundance_tow$coefficients[grep('^area_month011', names(abundance_tow$coefficients))], area= '011',
+          se = sqrt(diag(vcov(abundance_tow)))[grep('^area_month011', names(sqrt(diag(vcov(abundance_tow)))))],
+          month=gsub(".*:", "", names(abundance_tow$coefficients[grep('^area_month011', names(abundance_tow$coefficients))])))),
+  data.frame(cbind(indices=abundance_tow$coefficients[grep('^area_month012', names(abundance_tow$coefficients))], area= '012',
+          se = sqrt(diag(vcov(abundance_tow)))[grep('^area_month012', names(sqrt(diag(vcov(abundance_tow)))))],
+          month=gsub(".*:", "", names(abundance_tow$coefficients[grep('^area_month012', names(abundance_tow$coefficients))])))),
+  data.frame(cbind(indices=abundance_tow$coefficients[grep('^area_month014', names(abundance_tow$coefficients))], area= '014',
+          se = sqrt(diag(vcov(abundance_tow)))[grep('^area_month014', names(sqrt(diag(vcov(abundance_tow)))))],
+          month=gsub(".*:", "", names(abundance_tow$coefficients[grep('^area_month014', names(abundance_tow$coefficients))])))),
+  data.frame(cbind(indices=abundance_tow$coefficients[grep('^area_month015', names(abundance_tow$coefficients))], area= '015',
+          se = sqrt(diag(vcov(abundance_tow)))[grep('^area_month015', names(sqrt(diag(vcov(abundance_tow)))))],
+          month=gsub(".*:", "", names(abundance_tow$coefficients[grep('^area_month015', names(abundance_tow$coefficients))])))),
+  data.frame(cbind(indices=abundance_tow$coefficients[grep('^area_month016', names(abundance_tow$coefficients))], area= '016',
+          se = sqrt(diag(vcov(abundance_tow)))[grep('^area_month016', names(sqrt(diag(vcov(abundance_tow)))))],
+          month=gsub(".*:", "", names(abundance_tow$coefficients[grep('^area_month016', names(abundance_tow$coefficients))])))),
+  data.frame(cbind(indices=abundance_tow$coefficients[grep('^area_month013', names(abundance_tow$coefficients))], area= '013',
+          se = sqrt(diag(vcov(abundance_tow)))[grep('^area_month013', names(sqrt(diag(vcov(abundance_tow)))))],
+          month=gsub(".*:", "", names(abundance_tow$coefficients[grep('^area_month013', names(abundance_tow$coefficients))])))))
+
+area_month$month2 <- factor(month.abb[as.numeric(area_month$month)], levels = c('Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'))
+
+area_month$indices <- as.numeric(area_month$indices)
+area_month$se <- as.numeric(area_month$se)
+area_month$month <- as.numeric(area_month$month)
+area_month$area <- as.factor(area_month$area)
+
+ggplot(area_month) +
+  geom_point(data=area_month, aes(x=month2, y=indices, group=1)) +
+  geom_line(data=area_month, aes(x=month2, y=indices, group=1)) +
+  geom_errorbar(data=area_month, aes(x= month2, ymin=indices-se, ymax=indices+se, group=1)) +
+  # scale_x_continuous(breaks=1:12,labels=levels(area_month$month2))+
+  geom_hline(yintercept=0,linetype=3,colour='grey') +
+  facet_wrap(~ area) +
+  labs(x='Month', y='Coefficient') +
+  scale_size_area() +
+  theme_classic() +
+  theme(axis.text.x=element_text(angle=90))
+@
+
+<<influcdi_target_tow, fig.cap='BT-MIX TCER coefficient-distribution-influence plot for target species.', fig.pos='!htb', fig.height=4.5>>=
+influ_tow$cdiPlot('target')
+@
+
+<<influcdi_depth_tow, fig.cap='BT-MIX TCER coefficient-distribution-influence plot for fishing depth.', fig.pos='!htb', fig.height=4.5>>=
+influ_tow$cdiPlot('poly(log(bottom), 3)')
+@
+
+<<influcdi_width_tow, fig.cap='GUR 2 TCER coefficient-distribution-influence plot for gear width.', fig.pos='!htb', fig.height=4.5>>=
+influ_tow$cdiPlot('poly(log(width), 3)')
+@
+
+\end{document}

@@ -1,0 +1,36 @@
+<<init>>=
+library(xtable)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(rgdal)
+library(grid)
+library(broom)
+library(influ)
+library(analyser)
+library(PBSmapping)
+library(survival)
+library(cowplot)
+library(gridExtra)
+library(RColorBrewer)
+thousands <- function(x) {format(round(as.numeric(x), 0), nsmall=0, big.mark=" ")}
+geomean <- function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+load(file = 'gur2.rda')
+fyr <- as.numeric(max(effort$fishyear, na.rm=TRUE))
+species <- 'gurnard'
+species_code <- 'GUR 2'
+@
+
+The vessel-date aggregation recommended by \citet{langley2014} is used to provide a
+ data set from 1990 to 2017.
+
+The BT-MIX fishery is defined as follows:
+\begin{itemize}
+  \item Form type in (CEL, TCP, TCE)
+  \item Primary method: bottom trawl (BT)
+  \item Target species either gurnard, trevally or snapper (GUR, TRE, SNA)
+  \item Fishing effort conducted within Statistical Areas 011, 012, 013, 014, 015 or 016
+  \item Fishing effort conducted between 1 Oct 1989 and 30 Sept \Sexpr{fyr}
+\end{itemize}

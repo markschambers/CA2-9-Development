@@ -1,0 +1,2 @@
+docker: "ubuntu/trophia-tools"
+databases: [ kahawai, layers ]

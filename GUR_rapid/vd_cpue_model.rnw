@@ -1,0 +1,63 @@
+<<init>>=
+library(xtable)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(rgdal)
+library(grid)
+library(broom)
+library(influ)
+library(analyser)
+library(PBSmapping)
+library(survival)
+library(cowplot)
+library(gridExtra)
+library(RColorBrewer)
+thousands <- function(x) {format(round(as.numeric(x), 0), nsmall=0, big.mark=" ")}
+geomean <- function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+load(file = 'gur2.rda')
+fyr <- as.numeric(max(effort$fishyear, na.rm=TRUE))
+species <- 'gurnard'
+species_code <- 'GUR 2'
+@
+
+\small
+\begin{table}[ht]
+\centering
+\caption{The variables in the Weibull vessel-day resolution \Sexpr{species_code} CPUE model.}
+\begin{tabular}{p{2.5cm} R{6cm} R{2.75cm} R{2cm}}
+  Variable & Definition & Data type & Range \\
+  \rule{0pt}{3ex}
+  fyear & Fishing year  & Categorical (27)  & 1990:\Sexpr{fyr} \\
+  \rule{0pt}{1ex}
+  vessel & Fishing vessel & Categorical (47) &    \\
+  \rule{0pt}{1ex}
+  month & Month & Categorical (12) &  Jan-Dec \\
+  \rule{0pt}{1ex}
+  area & Statistical Area & Categorical (6) &  011-016 \\
+  \rule{0pt}{1ex}
+  area * month & Area and month combination & Categorical (72) &    \\
+  \rule{0pt}{1ex}
+  duration & Natural logarithm of trawl duration (hours) & Continuous & ln(1:24) \\
+  \rule{0pt}{1ex}
+  target & Most frequent target species for the vessel-day & Categorical (3) & GUR, SNA, TRE\\
+\end{tabular}
+\label{tab:celr_pre}
+\end{table}
+
+
+\begin{table}[ht]
+\centering
+\caption{Summary of the \Sexpr{species_code} BT-MIX aggregated Generalised Linear Models.}
+\begin{tabular}{p{2.5cm} R{7cm} R{3.5cm}}
+% \begin{tabular}{p{0.2\\textwidth}R{0.2\\textwidth}R{0.2\\textwidth}R{0.2\\textwidth}}
+Analysis & CPUE Model & Error Distribution \\
+\rule{0pt}{3ex}
+% Occurrence of positive catch & catch>0 $\sim$ fyear + vessel + target + poly(log(duration), 3) + area  & Binomial \\
+% \rule{0pt}{3ex}
+Magnitude of positive catch & positive catch $\sim$ fyear + poly(log(duration), 3) + vessel + target + area * month  & Weibull \\
+\end{tabular}
+\label{tab:models}
+\end{table}
